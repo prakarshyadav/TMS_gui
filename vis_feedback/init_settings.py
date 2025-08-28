@@ -8,8 +8,29 @@ import json
 import yaml
 from vis_feedback import render_emg,init_settings
 
-def compose_trials(cont, stim, trl):
-    return composed_trials
+def compose_trials(cont_dict, stim_dict, trl_dict, shuffle_seed):
+    composed_trials = []
+    for trl_id, trl in enumerate(trl_dict.keys()):
+        contraction_params = cont_dict[trl_dict[trl]['contraction']]
+        stimulation_params = stim_dict[trl_dict[trl]['stim']]
+        for reps in range(trl_dict[trl]['repetition']):
+            rep_dict = {
+                'contraction': trl_dict[trl]['contraction'],
+                'stim_type': trl_dict[trl]['stim'],
+                'sham': trl_dict[trl]['sham'],
+                'completion_flag': False,
+                'notes': '',
+                }
+            rep_dict.update(contraction_params)
+            rep_dict.update(stimulation_params)
+            composed_trials.append(rep_dict)
+    np.random.seed(shuffle_seed)
+    np.random.shuffle(composed_trials)
+    composed_trials_dict = {}
+    for trl_id in range(len(composed_trials)):
+        composed_trials[trl_id]['TrlNum'] = trl_id+1
+        composed_trials_dict[trl_id+1] = composed_trials[trl_id]
+    return composed_trials_dict
 
 class APP:
     def __init__(self,parent,tmsi):
@@ -422,7 +443,7 @@ class APP:
         with open(self.trl_type_path.get(), 'r') as f:
             trial_types = yaml.safe_load(f)
 
-        composed_trl = compose_trials(contraction_types, stimulation_types, trial_types)
+        composed_trl = compose_trials(contraction_types, stimulation_types, trial_types, shuffle_seed = int(self.today))
         with open(dump_name+"/params.json", "w") as outfile: 
             json.dump(composed_trl, outfile, indent = 4) 
 

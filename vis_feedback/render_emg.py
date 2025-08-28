@@ -23,6 +23,7 @@ import nidaqmx
 import nidaqmx.system
 from nidaqmx.constants import LineGrouping
 from tkinter import simpledialog
+import json
 """
 The code seems to be unstable if alternating between trail and rec mode
 Also sometimes stream does not close properly (issue with sample_data_server.py) which causes code to crash after a while
@@ -1065,7 +1066,7 @@ class APP:
         self.lbl_param_file_path.pack(fill='x', expand=True)
         self.lbl_param_file_path.place(x=1000, y=20)
         self.t_param_file_path = tk.Entry(self.parent.frame_exp, textvariable=self.param_file_path)
-        self.t_param_file_path.insert(0, os.path.join(self.dump_path,'params.csv'))
+        self.t_param_file_path.insert(0, os.path.join(self.dump_path,'params.json'))
         self.t_param_file_path.pack(fill='x', expand=True)
         self.t_param_file_path.focus()
         self.t_param_file_path.place(x=1100, y=20, width = 200)
@@ -1099,6 +1100,20 @@ class APP:
         if not self.time_update_started:
             self.time_update_started = True
 
+    def read_json(self, path, trial_ID):
+        with open(path, 'r') as f:
+            params = json.load(f)
+        return params[str(trial_ID)]
+
+    def update_json(self, path, trial_ID):
+        with open(path, 'r') as f:
+            params = json.load(f)
+        params[str(trial_ID)]['completion_flag'] = True
+        params[str(trial_ID)]['notes'] =  str(self.painscore)
+        with open(path, "w") as outfile: 
+            json.dump(params, outfile, indent = 4) 
+
+
     def read_csv(self, path, trial_ID):
         
         params = np.loadtxt(path,dtype='str',delimiter=',')
@@ -1117,81 +1132,23 @@ class APP:
 
     def update_params(self, param_dict):
 
-        self.X_profile.set(param_dict["X axis"].replace(';',', '))# = tk.StringVar()
-        self.Y_profile.set(param_dict["MVC targets"].replace(';',', '))# = tk.StringVar()
+        self.X_profile.set(str(param_dict["X_axis"])[1:-1])# = tk.StringVar()
+        self.Y_profile.set(str(param_dict["Y_axis"])[1:-1])# = tk.StringVar()
         self.do_vanilla()
 
-        if int(param_dict['TMS flag']):
-            self.parent.frame_exp.stim_rate.set(float(param_dict['TMS stim interval']))# = tk.StringVar()
-            self.stim_start.set(float(param_dict['Start time for stim']))# = tk.StringVar()
-            self.stim_stop.set(float(param_dict['Stop time for stim']))# = tk.StringVar()
+        if int(param_dict['TMSflag']):
+            self.parent.frame_exp.stim_rate.set(float(param_dict['stim_interval']))# = tk.StringVar()
+            self.stim_start.set(float(param_dict['start_time']))# = tk.StringVar()
+            self.stim_stop.set(float(param_dict['stop_time']))# = tk.StringVar()
             self.stim_push()
 
-        if int(param_dict['Heat pain flag']):
-
-            self.t1_c1_check.set(int(param_dict['Therm 1 contact 1']))# = tk.IntVar()
-            # self.therm1_c1.set(int(param_dict['Therm 1 contact 1']))
-            self.t1_c2_check.set(int(param_dict['Therm 1 contact 2']))# = tk.IntVar() = tk.IntVar()
-            # self.therm1_c2.set(int(param_dict['Therm 1 contact 2']))
-            self.t1_c3_check.set(int(param_dict['Therm 1 contact 3']))# = tk.IntVar() = tk.IntVar()
-            # self.therm1_c3.set(int(param_dict['Therm 1 contact 3']))
-            self.t1_c4_check.set(int(param_dict['Therm 1 contact 4']))# = tk.IntVar() = tk.IntVar()
-            # self.therm1_c4.set(int(param_dict['Therm 1 contact 4']))
-            self.t1_c5_check.set(int(param_dict['Therm 1 contact 5']))# = tk.IntVar() = tk.IntVar()
-            # self.therm1_c5.set(int(param_dict['Therm 1 contact 5']))
-
-            self.t2_c1_check.set(int(param_dict['Therm 2 contact 1']))# = tk.IntVar() = tk.IntVar()
-            # self.therm2_c1.set(int(param_dict['Therm 2 contact 1']))
-            self.t2_c2_check.set(int(param_dict['Therm 2 contact 2']))# = tk.IntVar() = tk.IntVar()
-            # self.therm2_c2.set(int(param_dict['Therm 2 contact 2']))
-            self.t2_c3_check.set(int(param_dict['Therm 2 contact 3']))# = tk.IntVar() = tk.IntVar()
-            # self.therm2_c3.set(int(param_dict['Therm 2 contact 3']))
-            self.t2_c4_check.set(int(param_dict['Therm 2 contact 4']))# = tk.IntVar() = tk.IntVar()
-            # self.therm2_c4.set(int(param_dict['Therm 2 contact 4']))
-            self.t2_c5_check.set(int(param_dict['Therm 2 contact 5']))# = tk.IntVar() = tk.IntVar()
-            # self.therm2_c5.set(int(param_dict['Therm 2 contact 5']))
-            self.select_contacts()
-            contacts_1 = int(param_dict['Therm 1 contact 1'])+int(param_dict['Therm 1 contact 2'])+int(param_dict['Therm 1 contact 3'])+int(param_dict['Therm 1 contact 4'])+int(param_dict['Therm 1 contact 5'])
-            contacts_2 = int(param_dict['Therm 2 contact 1'])+int(param_dict['Therm 2 contact 2'])+int(param_dict['Therm 2 contact 3'])+int(param_dict['Therm 2 contact 4'])+int(param_dict['Therm 2 contact 5'])
-            if contacts_1 >0:
-                therm1_base_arr = np.array(param_dict['Therm 1 base'].split(';')[:-1],dtype = float)
-                therm1_duration_arr = np.array(param_dict['Therm 1 duration'].split(';')[:-1],dtype = float)
-                therm1_tgt_arr =  np.array(param_dict['Therm 1 temp'].split(';')[:-1],dtype = float)
-                therm1_uprate_arr =  np.array(param_dict['Therm 1 rate down'].split(';')[:-1],dtype = float)
-                therm1_downrate_arr =  np.array(param_dict['Therm 1 rate up'].split(';')[:-1],dtype = float)
-                therm1_start_arr =  np.array(param_dict['Therm 1 start time'].split(';')[:-1],dtype = float)
-                for i in range(len(therm1_base_arr)):
-                    self.therm1_baseline.set(therm1_base_arr[i])# = tk.StringVar()
-                    self.therm1_hold_duration.set(therm1_duration_arr[i])
-                    self.therm1_tgt_temp.set(therm1_tgt_arr[i])# = tk.StringVar()
-                    self.therm1_ramp_down_rate.set(therm1_downrate_arr[i])# = tk.StringVar()
-                    self.therm1_ramp_up_rate.set(therm1_uprate_arr[i])# = tk.StringVar()
-                    self.therm1_start_time.set(therm1_start_arr[i])# = tk.StringVar()
-                    self.push_therm_config()
-
-            if contacts_2 >0:
-                therm2_base_arr = np.array(param_dict['Therm 2 base'].split(';')[:-1],dtype = float)
-                therm2_duration_arr = np.array(param_dict['Therm 2 duration'].split(';')[:-1],dtype = float)
-                therm2_tgt_arr =  np.array(param_dict['Therm 2 temp'].split(';')[:-1],dtype = float)
-                therm2_uprate_arr =  np.array(param_dict['Therm 2 rate down'].split(';')[:-1],dtype = float)
-                therm2_downrate_arr =  np.array(param_dict['Therm 2 rate up'].split(';')[:-1],dtype = float)
-                therm2_start_arr =  np.array(param_dict['Therm 2 start time'].split(';')[:-1],dtype = float)
-                for i in range(len(therm2_base_arr)):
-                    self.therm2_baseline.set(therm2_base_arr[i])# = tk.StringVar()
-                    self.therm2_hold_duration.set(therm2_duration_arr[i])
-                    self.therm2_tgt_temp.set(therm2_tgt_arr[i])# = tk.StringVar()
-                    self.therm2_ramp_down_rate.set(therm2_downrate_arr[i])# = tk.StringVar()
-                    self.therm2_ramp_up_rate.set(therm2_uprate_arr[i])# = tk.StringVar()
-                    self.therm2_start_time.set(therm2_start_arr[i])# = tk.StringVar()
-                    self.push_therm_config()
-
-        if int(param_dict['Completion Flag']) > 0:
+        if int(param_dict['completion_flag']) == 'true':
             showinfo("Trial marked as completed", "This trial has been marked as completed make sure to not duplicate files")
         self.parent.update()
 
     def read_cur_trial(self):
         current_trial = int(self.trial_ID.get())
-        trial_param_dict = self.read_csv(self.param_file_path.get(),current_trial)
+        trial_param_dict = self.read_json(self.param_file_path.get(),current_trial)
         self.update_params(trial_param_dict)
         self.t_trial_ID.delete(0, 'end')
         self.t_trial_ID.insert(0, str(current_trial))
@@ -1203,7 +1160,7 @@ class APP:
         self.trial_ID.set(str(int(self.trial_ID.get())+1))
         current_trial = int(self.trial_ID.get())
 
-        trial_param_dict = self.read_csv(self.param_file_path.get(),current_trial)
+        trial_param_dict = self.read_json(self.param_file_path.get(),current_trial)
         self.update_params(trial_param_dict)
         
         self.t_trial_ID.delete(0, 'end')
@@ -1215,7 +1172,7 @@ class APP:
         current_trial = int(self.trial_ID.get())
 
 
-        trial_param_dict = self.read_csv(self.param_file_path.get(),current_trial)
+        trial_param_dict = self.read_json(self.param_file_path.get(),current_trial)
         self.update_params(trial_param_dict)
 
         self.t_trial_ID.delete(0, 'end')
@@ -1467,9 +1424,9 @@ class APP:
         # self.parent.withdraw()
         nWin = tk.Tk()
         nWin.withdraw()
-        self.painscore = simpledialog.askstring(title="Pain score (NO COMMAS)", prompt = "Pain score or notes for trial "+self.trial_ID.get())
+        self.painscore = simpledialog.askstring(title="Notes for trial", prompt = "Notes for trial "+self.trial_ID.get())
         nWin.destroy()
-        self.update_csv(self.param_file_path.get(),int(self.trial_ID.get()))
+        self.update_json(self.param_file_path.get(),int(self.trial_ID.get()))
 
         
         self.read_next_trial()

@@ -1,7 +1,7 @@
 
 import tkinter as tk
 from tkinter import ttk
-import os
+import os, time
 from tmsi_dual_interface import TMSi_gui
 from vis_feedback import render_emg,init_settings
 
@@ -31,7 +31,7 @@ class APP_main(tk.Tk):
         self.nb2 = init_settings.APP(self,self.tmsi_dev)
         self.notebook.add(self.frame_sett, text='Settings init')
 
-        self.dump_path = 'data/PX/20250409'
+        self.dump_path = 'data/PX/'+ time.strftime("%Y%m%d")
 
         self.frame_exp = ttk.Frame(self.notebook, width=2000, height=1000)
         self.frame_exp.pack(fill='both', expand=True)
