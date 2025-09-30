@@ -8,6 +8,7 @@ import json
 import yaml
 from vis_feedback import render_emg,init_settings
 
+
 def compose_trials(cont_dict, stim_dict, trl_dict, shuffle_seed):
     composed_trials = []
     for trl_id, trl in enumerate(trl_dict.keys()):
@@ -21,6 +22,8 @@ def compose_trials(cont_dict, stim_dict, trl_dict, shuffle_seed):
                 'completion_flag': False,
                 'notes': '',
                 }
+            if stimulation_params['shuffle_stim']:
+                np.random.shuffle(stimulation_params['Y_DS8R'])
             rep_dict.update(contraction_params)
             rep_dict.update(stimulation_params)
             composed_trials.append(rep_dict)
@@ -105,6 +108,16 @@ class APP:
         self.t_cont_type.pack(fill='x', expand=True)
         self.t_cont_type.focus()
         self.t_cont_type.place(x=200, y=540, width = 200)
+
+        self.thScreen_type_path = tk.StringVar()
+        self.lbl_thScreen_type = ttk.Label(self.parent.frame_sett, text='TMS/DS8R thresholding config')
+        self.lbl_thScreen_type.pack(fill='x', expand=True)
+        self.lbl_thScreen_type.place(x=10, y=570)
+        self.t_thScreen_type = tk.Entry(self.parent.frame_sett, textvariable=self.thScreen_type_path)
+        self.t_thScreen_type.insert(0, "./data/thresholding_types.yml")
+        self.t_thScreen_type.pack(fill='x', expand=True)
+        self.t_thScreen_type.focus()
+        self.t_thScreen_type.place(x=200, y=570, width = 200)
 
         keys = list(self.tmsi.keys())
         if len(self.tmsi)>1:
@@ -390,6 +403,7 @@ class APP:
             print("Dir not found, making it")
             # os.makedirs(dump_name)
             os.makedirs(dump_name+'/MEPs')
+            os.makedirs(dump_name+'/thresholding')
             os.makedirs(dump_name+'/MVC')
         
         keys = list(self.tmsi.keys())
@@ -442,6 +456,13 @@ class APP:
             
         with open(self.trl_type_path.get(), 'r') as f:
             trial_types = yaml.safe_load(f)
+
+        with open(self.thScreen_type_path.get(), 'r') as f:
+            thresh_types = yaml.safe_load(f)
+
+        composed_th = compose_trials(contraction_types, stimulation_types, thresh_types, shuffle_seed = int(self.today))
+        with open(dump_name+"/thresholding.json", "w") as outfile: 
+            json.dump(composed_th, outfile, indent = 4) 
 
         composed_trl = compose_trials(contraction_types, stimulation_types, trial_types, shuffle_seed = int(self.today))
         with open(dump_name+"/params.json", "w") as outfile: 

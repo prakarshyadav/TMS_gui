@@ -42,7 +42,6 @@ class Inlet:
 
     def pull_and_plot(self,):
         pass
-
 class DataInlet(Inlet):
     dtypes = [[], np.float32, np.float64, None, np.int32, np.int16, np.int8, np.int64]
 
@@ -73,22 +72,29 @@ class DataInlet_reset(Inlet):
         self.buffer = np.empty(self.bufsize, dtype=self.dtypes[self.info])
         return out
 
-class check_MEPs_win(tk.Toplevel):
-    def __init__(self, parent, task_trial, task_stim, target_profile_x,target_profile_y,stim_profile_x,stim_profile_y, trial_params,dev_select='FLX', vis_chan_mode='avg', vis_chan = 10,vis_chan_mode_check='single', vis_chan_check = 35,record = False,):
+class check_MEPs_win(tk.Toplevel):  
+    def __init__(self, parent, task_trial, task_stim, task_analog, DS8R_analog, DS8R_trig,target_profile_x,target_profile_y,stim_profile_x,stim_profile_y, DS8R_stim_x, DS8R_stim_y, trial_params,dev_select='FLX', vis_chan_mode='avg', vis_chan = 10,vis_chan_mode_check='single', vis_chan_check = 35,record = False):
         super().__init__(parent)
 
         self.vis_buffer_len = 5
         self.vis_xlim_pad = 3
         self.EMG_avg_win = 100 #in samples
         self.vis_chan_mode  = vis_chan_mode
-        self.vis_chan = int(vis_chan)
+        self.vis_chan = int(vis_chan)        
         self.vis_chan_mode_check  = vis_chan_mode_check
         self.vis_chan_check = int(vis_chan_check)
+
         self.task_trial = task_trial
         self.task_stim = task_stim
+        self.task_analog = task_analog
+        self.DS8R_analog = DS8R_analog
+        self.DS8R_trig = DS8R_trig
         self.force_holder = deque(list(np.empty(self.vis_buffer_len)))
         self.trig_holder = deque(list(np.empty(self.vis_buffer_len,dtype= bool)))
-        self.stim_profile_x = stim_profile_x
+        self.stim_profile_x = deque(list(stim_profile_x))
+        self.stim_profile_y = deque(list(stim_profile_y))
+        self.DS8R_stim_profile_x = deque(list(DS8R_stim_x))
+        self.DS8R_stim_profile_y = deque(list(DS8R_stim_y))
         self.x_axis = np.linspace(0,1,self.vis_buffer_len)
         self.kill = False
 
@@ -147,7 +153,7 @@ class check_MEPs_win(tk.Toplevel):
         self.check_MEP_fig.set_xlabel("Time (ms)", fontsize=14)
         self.check_MEP_fig.set_ylabel("EMG (mV)/AUX (V)", fontsize=14)
 
-        self.l_target = self.disp_target.plot(target_profile_x, target_profile_y, linewidth = 50, color = 'r')
+        self.l_target = self.disp_target.plot(target_profile_x, target_profile_y, linewidth = 25, color = 'r')
         self.l_history = self.disp_target.plot(self.x_axis, self.force_holder, linewidth = 5, color = 'c',)
         self.l_current = self.disp_target.plot(self.x_axis, self.force_holder, linewidth = 13, color = 'b',)
         
@@ -205,7 +211,7 @@ class check_MEPs_win(tk.Toplevel):
         data_STA = self.inlet_STA.pull_and_plot()#
         array_data = self.inlet.pull_and_plot()#
         if self.vis_chan_mode == 'aux':
-            sos_raw = butter(3, [0.2, 20], 'bandpass', fs=2000, output='sos')
+            sos_raw = butter(3, [20, 500], 'bandpass', fs=2000, output='sos')
             sos_env= butter(3, 5, 'lowpass', fs=2000, output='sos')
             z_sos0 = sosfilt_zi(sos_raw)
             z_sos_raw=np.repeat(z_sos0[:, np.newaxis, :], len(self.vis_chan_slice), axis=1)
@@ -240,25 +246,58 @@ class check_MEPs_win(tk.Toplevel):
         baseline = 0
         baseline_list = []
         data_STA = self.inlet_STA.pull_and_plot()#
-        if stim_ctr<len(self.stim_profile_x)-1:
-            curr_pulse_time = self.stim_profile_x[stim_ctr]
+
+
+        if len(self.stim_profile_y)>0:
+            stim_amp = self.stim_profile_y[0]
+            self.task_analog.write(stim_amp)
+        if len(self.DS8R_stim_profile_y)>0:
+            DS8R_amp = self.DS8R_stim_profile_y[0]
+            self.DS8R_analog.write(DS8R_amp)
+        
         while time.time()-t0 < self.trial_params['duration'] and not self.kill:
             time.sleep(0.0001)
             self.trig_holder.popleft()
             
             stim = False
-            if time.time()-t0 > curr_pulse_time and stim_ctr<len(self.stim_profile_x):
-                stim = True
-                MEP_update = False
-                self.task_stim.write(True)
-                stim_ctr+=1
-                if stim_ctr<len(self.stim_profile_x):
-                    curr_pulse_time = self.stim_profile_x[stim_ctr]
-                else:
-                    curr_pulse_time += float(self.parent.frame_exp.stim_rate.get())
-                self.trig_holder.append(1)
+
+            if len(self.stim_profile_x)>0:
+                if time.time()-t0 > self.stim_profile_x[0]:
+                    MEP_update = False
+                    stim_ctr+=1
+                    stim = True
+                    stim_time = self.stim_profile_x.popleft()
+                    curr_pulse_time = stim_time
+                    self.task_stim.write(True)
+                    time.sleep(0.001)
+                    self.task_stim.write(False)
+                    self.trig_holder.append(1)
+                    
+                    self.stim_profile_y.popleft()
+                    if len(self.stim_profile_y)>0:
+                        stim_amp = self.stim_profile_y[0]
+                    self.task_analog.write(stim_amp)
+
+            DS8R_stim = False
+            if len(self.DS8R_stim_profile_x)>0:
+                if time.time()-t0 > self.DS8R_stim_profile_x[0]:
+                    DS8R_stim = True
+                    MEP_update = False
+                    stim_ctr+=1
+                    DS8R_time = self.DS8R_stim_profile_x.popleft()
+                    curr_pulse_time = DS8R_time
+                    self.DS8R_trig.write(True)
+                    time.sleep(0.001)
+                    self.DS8R_trig.write(False)
+                    
+                    self.DS8R_stim_profile_y.popleft()
+                    if len(self.DS8R_stim_profile_y)>0:
+                        DS8R_amp = self.DS8R_stim_profile_y[0]
+                    self.DS8R_analog.write(DS8R_amp)
+
             self.trig_holder.append(0)
-            if time.time()-t0 > (curr_pulse_time-3.5) and not MEP_update and stim_ctr > 0:
+
+            if time.time()-t0 > (curr_pulse_time+0.5) and not MEP_update and stim_ctr > 0:
                 MEP_update = True
                 data_STA = self.inlet_STA.pull_and_plot()#
                 trigs = data_STA[:,-3]
@@ -266,12 +305,13 @@ class check_MEPs_win(tk.Toplevel):
                 print("updating MEPs", plot_event_idx)
                 if len(plot_event_idx)>1:
                     if self.vis_chan_mode_check == 'aux':
-                        data_STA_filt = np.abs(data_STA[:,self.vis_chan_slice_check])
+                        data_STA_filt = sosfilt(sos_raw_sta, data_STA[:,self.vis_chan_slice_check].T)
+                        # data_STA_filt = np.abs(data_STA[:,self.vis_chan_slice_check])
                     else:
                         data_STA_filt = sosfilt(sos_raw_sta, data_STA[:,self.vis_chan_slice_check].T)
                     data_STA_scaled = np.nan_to_num(data_STA_filt,nan=0,posinf=0,neginf=0).reshape(-1)
                     plot_data = data_STA_scaled[plot_event_idx[-2]+self.trial_params['MEP_winL']*2:plot_event_idx[-2]+self.trial_params['MEP_winU']*2]
-                    SD_bound = np.std(data_STA_scaled[plot_event_idx[-2]-1050:plot_event_idx[-2]-50])
+                    SD_bound = np.std(data_STA_scaled[plot_event_idx[-2]-250:plot_event_idx[-2]-50])
                     l_cut = 4; u_cut = 10
                     plot_data[abs(self.trial_params['MEP_winL']*2)-l_cut:abs(self.trial_params['MEP_winL']*2)+u_cut] = np.zeros(l_cut+u_cut)
                     y_MEP = max(0.05,np.max(np.abs(plot_data)))
@@ -359,7 +399,7 @@ class check_MEPs_win(tk.Toplevel):
         self.destroy()
 
 class display_force_data(tk.Toplevel):
-    def __init__(self, parent, task_trial, task_stim, target_profile_x,target_profile_y,stim_profile_x,stim_profile_y, trial_params,dev_select='FLX', vis_chan_mode='avg', vis_chan = 10,record = False):
+    def __init__(self, parent, task_trial, task_stim, task_analog, DS8R_analog, DS8R_trig,target_profile_x,target_profile_y,stim_profile_x,stim_profile_y, DS8R_stim_x, DS8R_stim_y, trial_params,dev_select='FLX', vis_chan_mode='avg', vis_chan = 10,record = False):
         super().__init__(parent)
 
 
@@ -370,9 +410,15 @@ class display_force_data(tk.Toplevel):
         self.vis_chan = int(vis_chan)
         self.task_trial = task_trial
         self.task_stim = task_stim
+        self.task_analog = task_analog
+        self.DS8R_analog = DS8R_analog
+        self.DS8R_trig = DS8R_trig
         self.force_holder = deque(list(np.empty(self.vis_buffer_len)))
         self.trig_holder = deque(list(np.empty(self.vis_buffer_len,dtype= bool)))
-        self.stim_profile_x = stim_profile_x
+        self.stim_profile_x = deque(list(stim_profile_x))
+        self.stim_profile_y = deque(list(stim_profile_y))
+        self.DS8R_stim_profile_x = deque(list(DS8R_stim_x))
+        self.DS8R_stim_profile_y = deque(list(DS8R_stim_y))
         self.x_axis = np.linspace(0,1,self.vis_buffer_len)
         self.kill = False
 
@@ -409,7 +455,7 @@ class display_force_data(tk.Toplevel):
 
         self.disp_target.set_xlabel("Time (s)", fontsize=14)
         self.disp_target.set_ylabel("EMG (mV)/Torque (Nm)", fontsize=14)
-        self.l_target = self.disp_target.plot(target_profile_x, target_profile_y, linewidth = 50, color = 'r')
+        self.l_target = self.disp_target.plot(target_profile_x, target_profile_y, linewidth = 25, color = 'r')
         self.l_history = self.disp_target.plot(self.x_axis, self.force_holder, linewidth = 5, color = 'c',)
         self.l_current = self.disp_target.plot(self.x_axis, self.force_holder, linewidth = 13, color = 'b',)
         self.disp_target.set_xlim([0,self.trial_params['duration']])
@@ -475,25 +521,46 @@ class display_force_data(tk.Toplevel):
         #     baseline =  abs(np.mean(array_data_scaled))
         baseline_list = []
         t0 = time.time()
-        stim_ctr = 0
-        curr_pulse_time = 1e16
-        if stim_ctr<len(self.stim_profile_x)-1:
-            curr_pulse_time = self.stim_profile_x[stim_ctr]
+
+        if len(self.stim_profile_y)>0:
+            stim_amp = self.stim_profile_y[0]
+            self.task_analog.write(stim_amp)
+        if len(self.DS8R_stim_profile_y)>0:
+            DS8R_amp = self.DS8R_stim_profile_y[0]
+            self.DS8R_analog.write(DS8R_amp)
+
         baseline = 0
         while time.time()-t0 < self.trial_params['duration'] and not self.kill:
             time.sleep(0.0001)
             self.trig_holder.popleft()
             
             stim = False
-            if time.time()-t0 > curr_pulse_time and stim_ctr<len(self.stim_profile_x):
-                stim = True
-                self.task_stim.write(True)
-                stim_ctr+=1
-                if stim_ctr<len(self.stim_profile_x):
-                    curr_pulse_time = self.stim_profile_x[stim_ctr]
-                else:
-                    curr_pulse_time += float(self.parent.frame_exp.stim_rate.get())
-                self.trig_holder.append(1)
+            if len(self.stim_profile_x)>0:
+                if time.time()-t0 > self.stim_profile_x[0]:
+                    stim = True
+                    stim_time = self.stim_profile_x.popleft()
+                    self.task_stim.write(True)
+                    time.sleep(0.001)
+                    self.task_stim.write(False)
+                    self.trig_holder.append(1)
+                    self.stim_profile_y.popleft()
+                    if len(self.stim_profile_y)>0:
+                        stim_amp = self.stim_profile_y[0]
+                    self.task_analog.write(stim_amp)
+
+            DS8R_stim = False
+            if len(self.DS8R_stim_profile_x)>0:
+                if time.time()-t0 > self.DS8R_stim_profile_x[0]:
+                    DS8R_stim = True
+                    DS8R_time = self.DS8R_stim_profile_x.popleft()
+                    self.DS8R_trig.write(True)
+                    time.sleep(0.001)
+                    self.DS8R_trig.write(False)
+                    self.DS8R_stim_profile_y.popleft()
+                    if len(self.DS8R_stim_profile_y)>0:
+                        DS8R_amp = self.DS8R_stim_profile_y[0]
+                    self.DS8R_analog.write(DS8R_amp)
+
             self.trig_holder.append(0)
             
             self.force_holder.popleft()
@@ -526,7 +593,11 @@ class display_force_data(tk.Toplevel):
             self.force_holder.append(force)
             t_prev = time.time()-t0
             if stim==True:
-                print(time.time()-t0,curr_pulse_time,stim,force)
+                print('TMS', time.time()-t0,stim_time,stim,force)
+                
+            if DS8R_stim==True:
+                print('DS8R', time.time()-t0,DS8R_time,DS8R_stim,force)
+                
             if self.rec_flag:
                 self.task_stim.write(False)
                 self.parent.frame_exp.dump_trig.append(self.trig_holder[-1])
@@ -541,6 +612,9 @@ class display_force_data(tk.Toplevel):
             self.disp_target.set_xlim([time.time()-t0-self.vis_xlim_pad,time.time()-t0+self.vis_xlim_pad])
             self.canvas_disp_target.draw()
             self.update()
+        self.DS8R_analog.write(0)
+        self.task_analog.write(0)
+        
         self.inlet.inlet.close_stream()
         self.destroy()
 
@@ -733,53 +807,8 @@ class APP:
         self.target_profile_y = [0]
         self.stim_profile_x = np.empty(0)
         self.stim_profile_y = np.empty(0)
-        self.heat_profile_x = np.empty(0)
-        self.heat_profile_y = np.empty(0)
-
-        self.parent.frame_exp.stim_rate = tk.StringVar()
-        self.lbl_stim_rate = ttk.Label(self.parent.frame_exp, text='Interval b/w stim (s):')
-        self.lbl_stim_rate.pack(fill='x', expand=True)
-        self.lbl_stim_rate.place(x=710, y=20)
-        self.t_stim_rate = tk.Entry(self.parent.frame_exp, textvariable=self.parent.frame_exp.stim_rate)
-        self.t_stim_rate.insert(0, "5")
-        self.t_stim_rate.pack(fill='x', expand=True)
-        self.t_stim_rate.focus()
-        self.t_stim_rate.place(x=850, y=20, width = 100)
-
-        self.stim_start = tk.StringVar()
-        self.lbl_stim_start = ttk.Label(self.parent.frame_exp, text='Start time for stim (s):')
-        self.lbl_stim_start.pack(fill='x', expand=True)
-        self.lbl_stim_start.place(x=710, y=50)
-        self.t_stim_start = tk.Entry(self.parent.frame_exp, textvariable=self.stim_start)
-        self.t_stim_start.insert(0, "35")
-        self.t_stim_start.pack(fill='x', expand=True)
-        self.t_stim_start.focus()
-        self.t_stim_start.place(x=850, y=50, width = 100)
-
-        self.stim_stop = tk.StringVar()
-        self.lbl_stim_stop = ttk.Label(self.parent.frame_exp, text='Stop time for stim (s):')
-        self.lbl_stim_stop.pack(fill='x', expand=True)
-        self.lbl_stim_stop.place(x=710, y=80)
-        self.t_stim_stop = tk.Entry(self.parent.frame_exp, textvariable=self.stim_stop)
-        self.t_stim_stop.insert(0, "71")
-        self.t_stim_stop.pack(fill='x', expand=True)
-        self.t_stim_stop.focus()
-        self.t_stim_stop.place(x=850, y=80, width = 100)
-
-        self.pushstim_button = tk.Button(self.parent.frame_exp, text='PUSH STIM', bg ='yellow')
-        self.pushstim_button['command'] = self.stim_push
-        self.pushstim_button.pack()
-        self.pushstim_button.place(x=800, y=140)
-        
-        self.clearstim_button = tk.Button(self.parent.frame_exp, text='Clear STIM', bg ='yellow')
-        self.clearstim_button['command'] = self.stim_clear
-        self.clearstim_button.pack()
-        self.clearstim_button.place(x=900, y=140)
-
-        self.check_MEPs_button = tk.Button(self.parent.frame_exp, text='Check MEPs', bg ='yellow')
-        self.check_MEPs_button['command'] = self.check_MEPs
-        self.check_MEPs_button.pack()
-        self.check_MEPs_button.place(x=900, y=190)
+        self.DS8R_profile_x = np.empty(0)
+        self.DS8R_profile_y = np.empty(0)
 
 
         fig = Figure(figsize=(7, 4), dpi=100)
@@ -788,6 +817,8 @@ class APP:
         self.disp_target.set_title("Ramp profile", fontsize=14)
         self.disp_target.set_xlabel("Time (s)", fontsize=14)
         self.disp_target.set_ylabel("Torque (Nm)", fontsize=14)
+        self.disp_target_twin_ax = self.disp_target.twinx()
+        self.disp_target_twin_ax.set_ylabel("DS8R Stim amplitude (mA)", fontsize=14)
         
         self.canvas_disp_target = FigureCanvasTkAgg(fig, master=self.parent.frame_exp)  
         self.canvas_disp_target.draw()
@@ -817,249 +848,161 @@ class APP:
         self.trl_duration = self.target_profile_x[-1]
 
 
-        # self.therm_1_name = tk.StringVar()
-        # self.lbl_therm1 = ttk.Label(self.parent.frame_exp, text='Port for Thermode 1:')
-        # self.lbl_therm1.pack(fill='x', expand=True)
-        # self.t_therm1 = tk.Entry(self.parent.frame_exp, textvariable=self.therm_1_name)
-        # self.t_therm1.insert(0, "COM12")
-        # self.t_therm1.pack(fill='x', expand=True)
-        # self.t_therm1.focus()
-        # self.lbl_therm1.place(x=710, y=400)
-        # self.t_therm1.place(x= 850, y=400)
+        self.lbl_Astim_note = ttk.Label(self.parent.frame_exp, text='TMS: 10V->100%')
+        self.lbl_Astim_note.pack(fill='x', expand=True)
+        self.lbl_Astim_note.place(x=710, y=340)
+        self.analog_chan = tk.StringVar()
+        self.lbl_Astim_name = ttk.Label(self.parent.frame_exp, text='TMS stim AnaChan:')
+        self.lbl_Astim_name.pack(fill='x', expand=True)
+        self.lbl_Astim_name.place(x=710, y=400)
+        self.t_lbl_Astim_name = tk.Entry(self.parent.frame_exp, textvariable=self.analog_chan)
+        self.t_lbl_Astim_name.insert(0, "ao0")
+        self.t_lbl_Astim_name.pack(fill='x', expand=True)
+        self.t_lbl_Astim_name.focus()
+        self.t_lbl_Astim_name.place(x=850, y=400, width = 100)
 
-        # self.therm_2_name = tk.StringVar()
-        # self.lbl_therm2 = ttk.Label(self.parent.frame_exp, text='Port for Thermode 2:')
-        # self.lbl_therm2.pack(fill='x', expand=True)
-        # self.t_therm2 = tk.Entry(self.parent.frame_exp, textvariable=self.therm_2_name)
-        # self.t_therm2.insert(0, "None")
-        # self.t_therm2.pack(fill='x', expand=True)
-        # self.t_therm2.focus()
-        # self.lbl_therm2.place(x=710, y=430)
-        # self.t_therm2.place(x=850, y=430)
+        self.analog_chan_minV = tk.StringVar()
+        self.lbl_AstimMinV_name = ttk.Label(self.parent.frame_exp, text='Analog min (V):')
+        self.lbl_AstimMinV_name.pack(fill='x', expand=True)
+        self.t_AstimMinV = tk.Entry(self.parent.frame_exp, textvariable=self.analog_chan_minV)
+        self.t_AstimMinV.insert(0, "-10")
+        self.t_AstimMinV.pack(fill='x', expand=True)
+        self.t_AstimMinV.focus()
+        self.lbl_AstimMinV_name.place(x=710, y=430)
+        self.t_AstimMinV.place(x=850, y=430)
 
-        # self.dev_warn = ttk.Label(self.parent.frame_exp, text='NOTE: Use "None" to not include thermode')
-        # self.dev_warn.pack(fill='x', expand=True)
-        # self.dev_warn.place(x=700, y=370)
+        self.analog_chan_maxV = tk.StringVar()
+        self.lbl_AstimMaxV = ttk.Label(self.parent.frame_exp, text='Analog max (V):')
+        self.lbl_AstimMaxV.pack(fill='x', expand=True)
+        self.t_AstimMaxV = tk.Entry(self.parent.frame_exp, textvariable=self.analog_chan_maxV)
+        self.t_AstimMaxV.insert(0, "10")
+        self.t_AstimMaxV.pack(fill='x', expand=True)
+        self.t_AstimMaxV.focus()
+        self.lbl_AstimMaxV.place(x=710, y=460)
+        self.t_AstimMaxV.place(x=850, y=460)
+        
+        self.stim_intensity = tk.StringVar()
+        self.lbl_stim_intensity = ttk.Label(self.parent.frame_exp, text='Peak stim intensity (V)')
+        self.lbl_stim_intensity.pack(fill='x', expand=True)
+        self.lbl_stim_intensity.place(x=710, y=370)
+        self.t_stim_intensity = tk.Entry(self.parent.frame_exp, textvariable=self.stim_intensity)
+        self.t_stim_intensity.insert(0, "0.1")
+        self.t_stim_intensity.pack(fill='x', expand=True)
+        self.t_stim_intensity.focus()
+        self.t_stim_intensity.place(x=850, y=370, width = 100)
 
-        # self.init_therm_button = tk.Button(self.parent.frame_exp, text='START THERMODE', bg ='yellow')
-        # self.init_therm_button['command'] = self.init_therm
-        # self.init_therm_button.pack()
-        # self.init_therm_button.place(x=710, y=460)
+        self.stim_x_profile = tk.StringVar()
+        self.stim_lbl_X_profile = ttk.Label(self.parent.frame_exp, text='TMS stim times (s):')
+        self.stim_lbl_X_profile.pack(fill='x', expand=True)
+        self.stim_lbl_X_profile.place(x=710, y=530)
+        self.stim_t_X_profile = tk.Entry(self.parent.frame_exp, textvariable=self.stim_x_profile)
+        self.stim_t_X_profile.insert(0, "10, 11, 12, 5, 10, 25, 30, 35, 50, 55, 60")
+        self.stim_t_X_profile.pack(fill='x', expand=True)
+        self.stim_t_X_profile.focus()
+        self.stim_t_X_profile.place(x=850, y=530, width = 300)
 
-        # self.stop_therm_button = tk.Button(self.parent.frame_exp, text='STOP THERMODE', bg ='red')
-        # self.stop_therm_button['command'] = self.stop_therm
-        # self.stop_therm_button.pack()
-        # self.stop_therm_button.place(x=850, y=460)
+        self.stim_y_profile = tk.StringVar()
+        self.stim_lbl_Y_profile = ttk.Label(self.parent.frame_exp, text='TMS stim amp (%max):')
+        self.stim_lbl_Y_profile.pack(fill='x', expand=True)
+        self.stim_lbl_Y_profile.place(x=710, y=560)
+        self.stim_t_Y_profile = tk.Entry(self.parent.frame_exp, textvariable=self.stim_y_profile)
+        self.stim_t_Y_profile.insert(0, "0, 0.2, 0.4, 0.6, 0.8, 1")
+        self.stim_t_Y_profile.pack(fill='x', expand=True)
+        self.stim_t_Y_profile.focus()
+        self.stim_t_Y_profile.place(x=850, y=560, width = 300)
 
-        # self.therm1_param_title = ttk.Label(self.parent.frame_exp, text='Config params for thermode 1')
-        # self.therm1_param_title.pack(fill='x', expand=True)
-        # self.therm1_param_title.place(x=710, y=500)
+        self.lbl_DS8R_stim_note = ttk.Label(self.parent.frame_exp, text='DS8R: 10V->50mA')
+        self.lbl_DS8R_stim_note.pack(fill='x', expand=True)
+        self.lbl_DS8R_stim_note.place(x=1200, y=340)
+        self.DS8R_analog_chan = tk.StringVar()
+        self.lbl_DS8R_Astim_name = ttk.Label(self.parent.frame_exp, text='DS8R stim AnaChan:')
+        self.lbl_DS8R_Astim_name.pack(fill='x', expand=True)
+        self.lbl_DS8R_Astim_name.place(x=1200, y=400)
+        self.t_lbl_DS8R_Astim_name = tk.Entry(self.parent.frame_exp, textvariable=self.DS8R_analog_chan)
+        self.t_lbl_DS8R_Astim_name.insert(0, "ao1")
+        self.t_lbl_DS8R_Astim_name.pack(fill='x', expand=True)
+        self.t_lbl_DS8R_Astim_name.focus()
+        self.t_lbl_DS8R_Astim_name.place(x=1350, y=400, width = 100)
 
-        # self.therm1_baseline = tk.StringVar()
-        # self.lbl_therm1_bl = ttk.Label(self.parent.frame_exp, text='Baseline temp (C):')
-        # self.lbl_therm1_bl.pack(fill='x', expand=True)
-        # self.t_therm1_bl = tk.Entry(self.parent.frame_exp, textvariable=self.therm1_baseline)
-        # self.t_therm1_bl.insert(0, "31.0")
-        # self.t_therm1_bl.pack(fill='x', expand=True)
-        # self.t_therm1_bl.focus()
-        # self.lbl_therm1_bl.place(x=710, y=530)
-        # self.t_therm1_bl.place(x=850, y=530)
+        self.DS8R_intensity = tk.StringVar()
+        self.lbl_DS8R_intensity = ttk.Label(self.parent.frame_exp, text='Peak DS8R intensity (V)')
+        self.lbl_DS8R_intensity.pack(fill='x', expand=True)
+        self.lbl_DS8R_intensity.place(x=1200, y=370)
+        self.t_DS8R_intensity = tk.Entry(self.parent.frame_exp, textvariable=self.DS8R_intensity)
+        self.t_DS8R_intensity.insert(0, "0.1")
+        self.t_DS8R_intensity.pack(fill='x', expand=True)
+        self.t_DS8R_intensity.focus()
+        self.t_DS8R_intensity.place(x=1350, y=370, width = 100)
 
-        # self.therm1_hold_duration = tk.StringVar()
-        # self.lbl_therm1_hold = ttk.Label(self.parent.frame_exp, text='Holding duration (s):')
-        # self.lbl_therm1_hold.pack(fill='x', expand=True)
-        # self.t_therm1_hold = tk.Entry(self.parent.frame_exp, textvariable=self.therm1_hold_duration)
-        # self.t_therm1_hold.insert(0, "5")
-        # self.t_therm1_hold.pack(fill='x', expand=True)
-        # self.t_therm1_hold.focus()
-        # self.lbl_therm1_hold.place(x=710, y=560)
-        # self.t_therm1_hold.place(x=850, y=560)
+        self.DS8R_analog_chan_minV = tk.StringVar()
+        self.lbl_DS8R_AstimMinV_name = ttk.Label(self.parent.frame_exp, text='Analog min (V):')
+        self.lbl_DS8R_AstimMinV_name.pack(fill='x', expand=True)
+        self.t_DS8R_AstimMinV = tk.Entry(self.parent.frame_exp, textvariable=self.DS8R_analog_chan_minV)
+        self.t_DS8R_AstimMinV.insert(0, "-10")
+        self.t_DS8R_AstimMinV.pack(fill='x', expand=True)
+        self.t_DS8R_AstimMinV.focus()
+        self.lbl_DS8R_AstimMinV_name.place(x=1200, y=430)
+        self.t_DS8R_AstimMinV.place(x=1350, y=430)
 
-        # self.therm1_tgt_temp = tk.StringVar()
-        # self.lbl_therm1_tgt_temp = ttk.Label(self.parent.frame_exp, text='Holding temp (C):')
-        # self.lbl_therm1_tgt_temp.pack(fill='x', expand=True)
-        # self.t_therm1_tgt_temp = tk.Entry(self.parent.frame_exp, textvariable=self.therm1_tgt_temp)
-        # self.t_therm1_tgt_temp.insert(0, "40")
-        # self.t_therm1_tgt_temp.pack(fill='x', expand=True)
-        # self.t_therm1_tgt_temp.focus()
-        # self.lbl_therm1_tgt_temp.place(x=710, y=590)
-        # self.t_therm1_tgt_temp.place(x=850, y=590)
+        self.DS8R_analog_chan_maxV = tk.StringVar()
+        self.lbl_DS8R_AstimMaxV = ttk.Label(self.parent.frame_exp, text='Analog max (V):')
+        self.lbl_DS8R_AstimMaxV.pack(fill='x', expand=True)
+        self.t_DS8R_AstimMaxV = tk.Entry(self.parent.frame_exp, textvariable=self.DS8R_analog_chan_maxV)
+        self.t_DS8R_AstimMaxV.insert(0, "10")
+        self.t_DS8R_AstimMaxV.pack(fill='x', expand=True)
+        self.t_DS8R_AstimMaxV.focus()
+        self.lbl_DS8R_AstimMaxV.place(x=1200, y=460)
+        self.t_DS8R_AstimMaxV.place(x=1350, y=460)
 
-        # self.therm1_ramp_down_rate = tk.StringVar()
-        # self.lbl_therm1_ramp_down_rate = ttk.Label(self.parent.frame_exp, text='Ramp down rate (C/s):')
-        # self.lbl_therm1_ramp_down_rate.pack(fill='x', expand=True)
-        # self.lbl_therm1_ramp_down_rate.place(x=710, y=620)
-        # self.t_therm1_ramp_down_rate = tk.Entry(self.parent.frame_exp, textvariable=self.therm1_ramp_down_rate)
-        # self.t_therm1_ramp_down_rate.insert(0, "100")
-        # self.t_therm1_ramp_down_rate.pack(fill='x', expand=True)
-        # self.t_therm1_ramp_down_rate.focus()
-        # self.t_therm1_ramp_down_rate.place(x=850, y=620)
+        self.DS8R_trig_chan = tk.StringVar()
+        self.lbl_DS8R_Ach_name = ttk.Label(self.parent.frame_exp, text='DS8R Trig Chans:')
+        self.lbl_DS8R_Ach_name.pack(fill='x', expand=True)
+        self.lbl_DS8R_Ach_name.place(x=1200, y=490)
+        self.t_DS8R_Ach_name = tk.Entry(self.parent.frame_exp, textvariable=self.DS8R_trig_chan)
+        self.t_DS8R_Ach_name.insert(0, "port0/line3")
+        self.t_DS8R_Ach_name.pack(fill='x', expand=True)
+        self.t_DS8R_Ach_name.focus()
+        self.t_DS8R_Ach_name.place(x=1350, y=490, width = 100)
 
-        # self.therm1_ramp_up_rate = tk.StringVar()
-        # self.lbl_therm1_ramp_up_rate = ttk.Label(self.parent.frame_exp, text='Ramp up rate (C/s):')
-        # self.lbl_therm1_ramp_up_rate.pack(fill='x', expand=True)
-        # self.t_therm1_ramp_up_rate = tk.Entry(self.parent.frame_exp, textvariable=self.therm1_ramp_up_rate)
-        # self.t_therm1_ramp_up_rate.insert(0, "100")
-        # self.t_therm1_ramp_up_rate.pack(fill='x', expand=True)
-        # self.t_therm1_ramp_up_rate.focus()
-        # self.lbl_therm1_ramp_up_rate.place(x=710, y=650)
-        # self.t_therm1_ramp_up_rate.place(x=850, y=650)
+        self.DS8R_x_profile = tk.StringVar()
+        self.DS8R_lbl_X_profile = ttk.Label(self.parent.frame_exp, text='DS8R stim times (s):')
+        self.DS8R_lbl_X_profile.pack(fill='x', expand=True)
+        self.DS8R_lbl_X_profile.place(x=1200, y=530)
+        self.DS8R_t_X_profile = tk.Entry(self.parent.frame_exp, textvariable=self.DS8R_x_profile)
+        self.DS8R_t_X_profile.insert(0, "10, 11, 12, 5, 10, 25, 30, 35, 50, 55, 60")
+        self.DS8R_t_X_profile.pack(fill='x', expand=True)
+        self.DS8R_t_X_profile.focus()
+        self.DS8R_t_X_profile.place(x=1350, y=530, width = 300)
 
-        # self.therm1_start_time = tk.StringVar()
-        # self.lbl_therm1_start_time = ttk.Label(self.parent.frame_exp, text='Start time (s):')
-        # self.lbl_therm1_start_time.pack(fill='x', expand=True)
-        # self.t_therm1_start_time = tk.Entry(self.parent.frame_exp, textvariable=self.therm1_start_time)
-        # self.t_therm1_start_time.insert(0, "12")
-        # self.t_therm1_start_time.pack(fill='x', expand=True)
-        # self.t_therm1_start_time.focus()
-        # self.lbl_therm1_start_time.place(x=710, y=675)
-        # self.t_therm1_start_time.place(x=850, y=675)
+        self.DS8R_y_profile = tk.StringVar()
+        self.DS8R_lbl_Y_profile = ttk.Label(self.parent.frame_exp, text='DS8R stim amp (%max):')
+        self.DS8R_lbl_Y_profile.pack(fill='x', expand=True)
+        self.DS8R_lbl_Y_profile.place(x=1200, y=560)
+        self.DS8R_t_Y_profile = tk.Entry(self.parent.frame_exp, textvariable=self.DS8R_y_profile)
+        self.DS8R_t_Y_profile.insert(0, "0, 0.2, 0.4, 0.6, 0.8, 1")
+        self.DS8R_t_Y_profile.pack(fill='x', expand=True)
+        self.DS8R_t_Y_profile.focus()
+        self.DS8R_t_Y_profile.place(x=1350, y=560, width = 300)
 
-        # self.therm1_contact_title = ttk.Label(self.parent.frame_exp, text='Select contacts for thermode 1 (green event)')
-        # self.therm1_contact_title.pack(fill='x', expand=True)
-        # self.therm1_contact_title.place(x=1100, y=500)
+        self.pushstim_button = tk.Button(self.parent.frame_exp, text='PUSH STIM', bg ='yellow')
+        self.pushstim_button['command'] = self.stim_push
+        self.pushstim_button.pack()
+        self.pushstim_button.place(x=710, y=600)
+        
+        self.clearstim_button = tk.Button(self.parent.frame_exp, text='Clear STIM', bg ='yellow')
+        self.clearstim_button['command'] = self.stim_clear
+        self.clearstim_button.pack()
+        self.clearstim_button.place(x=1000, y=600)
 
-        # self.t1_c1_check = tk.IntVar()
-        # self.t1_c2_check = tk.IntVar()
-        # self.t1_c3_check = tk.IntVar()
-        # self.t1_c4_check = tk.IntVar()
-        # self.t1_c5_check = tk.IntVar()
+        self.check_MEPs_button = tk.Button(self.parent.frame_exp, text='Check MEPs', bg ='yellow')
+        self.check_MEPs_button['command'] = self.check_MEPs
+        self.check_MEPs_button.pack()
+        self.check_MEPs_button.place(x=900, y=190)
 
-        # self.therm1_c1 = tk.Checkbutton(self.parent.frame_exp, text='Contact 1',variable=self.t1_c1_check, onvalue=1, offvalue=0, command= self.select_contacts)
-        # self.therm1_c1.pack()
-        # self.therm1_c1.place(x=1100, y=530)
-        # self.t1_c1_check.set(1)
-
-        # self.therm1_c2 = tk.Checkbutton(self.parent.frame_exp, text='Contact 2',variable=self.t1_c2_check, onvalue=1, offvalue=0, command=self.select_contacts)
-        # self.therm1_c2.pack()
-        # self.therm1_c2.place(x=1100, y=560)
-        # self.t1_c2_check.set(0)
-
-        # self.therm1_c3 = tk.Checkbutton(self.parent.frame_exp, text='Contact 3',variable=self.t1_c3_check, onvalue=1, offvalue=0, command=self.select_contacts)
-        # self.therm1_c3.pack()
-        # self.therm1_c3.place(x=1100, y=590)
-        # self.t1_c3_check.set(0)
-
-        # self.therm1_c4 = tk.Checkbutton(self.parent.frame_exp, text='Contact 4',variable=self.t1_c4_check, onvalue=1, offvalue=0, command=self.select_contacts)
-        # self.therm1_c4.pack()
-        # self.therm1_c4.place(x=1100, y=620)
-        # self.t1_c4_check.set(0)
-
-        # self.therm1_c5 = tk.Checkbutton(self.parent.frame_exp, text='Contact 5',variable=self.t1_c5_check, onvalue=1, offvalue=0, command= self.select_contacts)
-        # self.therm1_c5.pack()
-        # self.therm1_c5.place(x=1100, y=650)
-        # self.t1_c5_check.set(0)
-
-
-        # self.therm2_param_title = ttk.Label(self.parent.frame_exp, text='Config params for thermode 2 (only read if 2 thermodes are init)')
-        # self.therm2_param_title.pack(fill='x', expand=True)
-        # self.therm2_param_title.place(x=710, y=700)
-
-        # self.therm2_baseline = tk.StringVar()
-        # self.lbl_therm2_bl = ttk.Label(self.parent.frame_exp, text='Baseline temp (C):')
-        # self.lbl_therm2_bl.pack(fill='x', expand=True)
-        # self.t_therm2_bl = tk.Entry(self.parent.frame_exp, textvariable=self.therm2_baseline)
-        # self.t_therm2_bl.insert(0, "31.0")
-        # self.t_therm2_bl.pack(fill='x', expand=True)
-        # self.t_therm2_bl.focus()
-        # self.lbl_therm2_bl.place(x=710, y=730)
-        # self.t_therm2_bl.place(x=850, y=730)
-
-        # self.therm2_hold_duration = tk.StringVar()
-        # self.lbl_therm2_hold = ttk.Label(self.parent.frame_exp, text='Holding duration (s):')
-        # self.lbl_therm2_hold.pack(fill='x', expand=True)
-        # self.t_therm2_hold = tk.Entry(self.parent.frame_exp, textvariable=self.therm2_hold_duration)
-        # self.t_therm2_hold.insert(0, "5")
-        # self.t_therm2_hold.pack(fill='x', expand=True)
-        # self.t_therm2_hold.focus()
-        # self.lbl_therm2_hold.place(x=710, y=760)
-        # self.t_therm2_hold.place(x=850, y=760)
-
-        # self.therm2_tgt_temp = tk.StringVar()
-        # self.lbl_therm2_tgt_temp = ttk.Label(self.parent.frame_exp, text='Holding temp (C):')
-        # self.lbl_therm2_tgt_temp.pack(fill='x', expand=True)
-        # self.t_therm2_tgt_temp = tk.Entry(self.parent.frame_exp, textvariable=self.therm2_tgt_temp)
-        # self.t_therm2_tgt_temp.insert(0, "40")
-        # self.t_therm2_tgt_temp.pack(fill='x', expand=True)
-        # self.t_therm2_tgt_temp.focus()
-        # self.lbl_therm2_tgt_temp.place(x=710, y=790)
-        # self.t_therm2_tgt_temp.place(x=850, y=790)
-
-        # self.therm2_ramp_down_rate = tk.StringVar()
-        # self.lbl_therm2_ramp_down_rate = ttk.Label(self.parent.frame_exp, text='Ramp down rate (C/s):')
-        # self.lbl_therm2_ramp_down_rate.pack(fill='x', expand=True)
-        # self.lbl_therm2_ramp_down_rate.place(x=710, y=820)
-        # self.t_therm2_ramp_down_rate = tk.Entry(self.parent.frame_exp, textvariable=self.therm2_ramp_down_rate)
-        # self.t_therm2_ramp_down_rate.insert(0, "100")
-        # self.t_therm2_ramp_down_rate.pack(fill='x', expand=True)
-        # self.t_therm2_ramp_down_rate.focus()
-        # self.t_therm2_ramp_down_rate.place(x=850, y=820)
-
-        # self.therm2_ramp_up_rate = tk.StringVar()
-        # self.lbl_therm2_ramp_up_rate = ttk.Label(self.parent.frame_exp, text='Ramp up rate (C/s):')
-        # self.lbl_therm2_ramp_up_rate.pack(fill='x', expand=True)
-        # self.t_therm2_ramp_up_rate = tk.Entry(self.parent.frame_exp, textvariable=self.therm2_ramp_up_rate)
-        # self.t_therm2_ramp_up_rate.insert(0, "100")
-        # self.t_therm2_ramp_up_rate.pack(fill='x', expand=True)
-        # self.t_therm2_ramp_up_rate.focus()
-        # self.lbl_therm2_ramp_up_rate.place(x=710, y=850)
-        # self.t_therm2_ramp_up_rate.place(x=850, y=850)
-
-        # self.therm2_start_time = tk.StringVar()
-        # self.lbl_therm2_start_time = ttk.Label(self.parent.frame_exp, text='Start time (s):')
-        # self.lbl_therm2_start_time.pack(fill='x', expand=True)
-        # self.t_therm2_start_time = tk.Entry(self.parent.frame_exp, textvariable=self.therm2_start_time)
-        # self.t_therm2_start_time.insert(0, "12")
-        # self.t_therm2_start_time.pack(fill='x', expand=True)
-        # self.t_therm2_start_time.focus()
-        # self.lbl_therm2_start_time.place(x=710, y=875)
-        # self.t_therm2_start_time.place(x=850, y=875)
-
-        # self.therm2_contact_title = ttk.Label(self.parent.frame_exp, text='Select contacts for thermode 2 (Green event)')
-        # self.therm2_contact_title.pack(fill='x', expand=True)
-        # self.therm2_contact_title.place(x=1100, y=700)
-
-        # self.t2_c1_check = tk.IntVar()
-        # self.t2_c2_check = tk.IntVar()
-        # self.t2_c3_check = tk.IntVar()
-        # self.t2_c4_check = tk.IntVar()
-        # self.t2_c5_check = tk.IntVar()
-
-        # self.therm2_c1 = tk.Checkbutton(self.parent.frame_exp, text='Contact 1',variable=self.t2_c1_check, onvalue=1, offvalue=0, command= self.select_contacts)
-        # self.therm2_c1.pack()
-        # self.therm2_c1.place(x=1100, y=730)
-        # self.t2_c1_check.set(1)
-
-        # self.therm2_c2 = tk.Checkbutton(self.parent.frame_exp, text='Contact 2',variable=self.t2_c2_check, onvalue=1, offvalue=0, command=self.select_contacts)
-        # self.therm2_c2.pack()
-        # self.therm2_c2.place(x=1100, y=760)
-        # self.t2_c2_check.set(0)
-
-        # self.therm2_c3 = tk.Checkbutton(self.parent.frame_exp, text='Contact 3',variable=self.t2_c3_check, onvalue=1, offvalue=0, command=self.select_contacts)
-        # self.therm2_c3.pack()
-        # self.therm2_c3.place(x=1100, y=790)
-        # self.t2_c3_check.set(0)
-
-        # self.therm2_c4 = tk.Checkbutton(self.parent.frame_exp, text='Contact 4',variable=self.t2_c4_check, onvalue=1, offvalue=0, command=self.select_contacts)
-        # self.therm2_c4.pack()
-        # self.therm2_c4.place(x=1100, y=820)
-        # self.t2_c4_check.set(0)
-
-        # self.therm2_c5 = tk.Checkbutton(self.parent.frame_exp, text='Contact 5',variable=self.t2_c5_check, onvalue=1, offvalue=0, command= self.select_contacts)
-        # self.therm2_c5.pack()
-        # self.therm2_c5.place(x=1100, y=850)
-        # self.t2_c5_check.set(0)
-
-        # self.push_therm_config_button = tk.Button(self.parent.frame_exp, text='PUSH CONFIG', bg ='yellow')
-        # self.push_therm_config_button['command'] = self.push_therm_config
-        # self.push_therm_config_button.pack()
-        # self.push_therm_config_button.place(x=710, y=900)
-
-        # self.clear_therm_config_button = tk.Button(self.parent.frame_exp, text='CLEAR CONFIG', bg ='yellow')
-        # self.clear_therm_config_button['command'] = self.clear_therm_config
-        # self.clear_therm_config_button.pack()
-        # self.clear_therm_config_button.place(x=810, y=900)
-
+        self.DS8R_pushstim_button = tk.Button(self.parent.frame_exp, text='PUSH STIM', bg ='yellow')
+        self.DS8R_pushstim_button['command'] = self.DS8R_stim_push
+        self.DS8R_pushstim_button.pack()
+        self.DS8R_pushstim_button.place(x=1200, y=600)
 
         self.param_file_path = tk.StringVar()
         self.lbl_param_file_path = ttk.Label(self.parent.frame_exp, text='Config file: ')
@@ -1081,6 +1024,38 @@ class APP:
         self.read_next_trial_button.pack()
         self.read_next_trial_button.place(x=1050, y=50)
 
+        self.thresholding_file_path = tk.StringVar()
+        self.lbl_thresholding_file_path = ttk.Label(self.parent.frame_exp, text='Thresholding file: ')
+        self.lbl_thresholding_file_path.pack(fill='x', expand=True)
+        self.lbl_thresholding_file_path.place(x=710, y=700)
+        self.t_thresholding_file_path = tk.Entry(self.parent.frame_exp, textvariable=self.thresholding_file_path)
+        self.t_thresholding_file_path.insert(0, os.path.join(self.dump_path,'thresholding.json'))
+        self.t_thresholding_file_path.pack(fill='x', expand=True)
+        self.t_thresholding_file_path.focus()
+        self.t_thresholding_file_path.place(x=810, y=700, width = 200)
+        
+        self.read_thresholding_profile_button = tk.Button(self.parent.frame_exp, text='READ PROFILE', bg ='yellow')
+        self.read_thresholding_profile_button['command'] = self.read_thresh_profile
+        self.read_thresholding_profile_button.pack()
+        self.read_thresholding_profile_button.place(x=1050, y=700)
+
+        profile_options = ['Recrutiment Threshold']
+        self.thresholding_profile = tk.StringVar() 
+        self.thresholding_profile.set(options[0])
+        self.thresholding_profile_drop = tk.OptionMenu( self.parent.frame_exp , self.thresholding_profile , *profile_options) #tk.Button(self, text='START', bg ='green')
+        self.thresholding_profile_drop.pack()
+        self.thresholding_profile_drop.place(x=810, y=750)
+        
+        self.push_thresholding_profile_button = tk.Button(self.parent.frame_exp, text='PUSH PROFILE', bg ='yellow')
+        self.push_thresholding_profile_button['command'] = self.push_thresh_profile
+        self.push_thresholding_profile_button.pack()
+        self.push_thresholding_profile_button.place(x=1050, y=750)
+
+        self.run_thresholding_button = tk.Button(self.parent.frame_exp, text='RUN THRESHOLDING EXP', bg ='yellow')
+        self.run_thresholding_button['command'] = lambda: self.start_rec(flag = 'thresholding')
+        self.run_thresholding_button.pack()
+        self.run_thresholding_button.place(x=810, y=900)
+
         self.trial_finish_time = time.time()
         self.lbl_trial_timer = ttk.Label(self.parent.frame_exp, text='Time since last trial',font=('Helvetica 16 bold'))
         self.lbl_trial_timer.pack(fill='x', expand=True)
@@ -1092,6 +1067,8 @@ class APP:
         self.trial_timer.pack(fill='x', expand=True)
         self.trial_timer.place(x=1250, y=200)
         self.time_update_started = False
+
+
         
     def time_update(self):
         self.trial_time.set(int(time.time() - self.trial_finish_time))
@@ -1131,18 +1108,25 @@ class APP:
         np.savetxt(path,params,fmt= "%s", delimiter=',')
 
     def update_params(self, param_dict):
-
+        self.stim_clear()
         self.X_profile.set(str(param_dict["X_axis"])[1:-1])# = tk.StringVar()
         self.Y_profile.set(str(param_dict["Y_axis"])[1:-1])# = tk.StringVar()
         self.do_vanilla()
 
         if int(param_dict['TMSflag']):
-            self.parent.frame_exp.stim_rate.set(float(param_dict['stim_interval']))# = tk.StringVar()
-            self.stim_start.set(float(param_dict['start_time']))# = tk.StringVar()
-            self.stim_stop.set(float(param_dict['stop_time']))# = tk.StringVar()
+            self.stim_x_profile.set(str(param_dict["X_stim"])[1:-1])
+            self.stim_y_profile.set(str(param_dict["Y_stim"])[1:-1])
+            # self.parent.frame_exp.stim_rate.set(float(param_dict['stim_interval']))# = tk.StringVar()
+            # self.stim_start.set(float(param_dict['start_time']))# = tk.StringVar()
+            # self.stim_stop.set(float(param_dict['stop_time']))# = tk.StringVar()
             self.stim_push()
 
-        if int(param_dict['completion_flag']) == 'true':
+        if int(param_dict['DS8Rflag']):
+            self.DS8R_x_profile.set(str(param_dict["X_DS8R"])[1:-1])
+            self.DS8R_y_profile.set(str(param_dict["Y_DS8R"])[1:-1])
+            self.DS8R_stim_push()
+
+        if int(param_dict['completion_flag']) == True:
             showinfo("Trial marked as completed", "This trial has been marked as completed make sure to not duplicate files")
         self.parent.update()
 
@@ -1167,10 +1151,28 @@ class APP:
         self.t_trial_ID.insert(0, str(current_trial))
         self.parent.update()
 
+    def read_thresh_profile(self):
+        with open(self.thresholding_file_path.get(), 'r') as f:
+            params = json.load(f)
+        profile_options = []
+        self.thresholding_profile_drop['menu'].delete(0, 'end')
+        for k in params.keys():
+            profile_options.append(params[k]['stim_type'])
+        for choice in profile_options:
+            self.thresholding_profile_drop['menu'].add_command(label=choice,command=tk._setit(self.thresholding_profile, choice))
+        self.parent.update()
+
+    def push_thresh_profile(self):
+        with open(self.thresholding_file_path.get(), 'r') as f:
+            params = json.load(f)
+        for k in params.keys():
+            if params[k]['stim_type'] == self.thresholding_profile.get():
+                self.update_params(params[k])
+        self.parent.update()
+
     def read_prev_trial(self):
         self.trial_ID.set(str(int(self.trial_ID.get())-1))
         current_trial = int(self.trial_ID.get())
-
 
         trial_param_dict = self.read_json(self.param_file_path.get(),current_trial)
         self.update_params(trial_param_dict)
@@ -1346,90 +1348,67 @@ class APP:
         self.init_therm_button.config(bg = 'yellow')
         self.stop_therm_button.config(bg = 'red')
 
-    def start_rec(self,):
+    def start_rec(self,flag = 'rec'):
 
         self.task_trial.write(False)
         print('starting')
-        self.start_tmsi()
+        self.start_tmsi(flag)
         start_time = time.time()
-
+        self.task_analog.write(float(self.stim_intensity.get()))
         trial_params = {
             "duration": self.trl_duration,
             "MVF": float(self.max_force.get()),
             }
-        if len(self.heat_dict)==0:
-            window = display_force_data(self.parent, self.task_trial, 
-                                        self.task_stim, 
-                                        self.target_profile_x,
-                                        self.target_profile_y,
-                                        self.stim_profile_x,
-                                        self.stim_profile_y,
-                                        trial_params,
-                                        dev_select=self.vis_TMSi.get(),
-                                        vis_chan_mode = self.vis_chan_mode.get(),
-                                        vis_chan = self.vis_chan.get(),
-                                        record=True
-                                        )
-            window.grab_set()
-            self.parent.wait_window(window)
+        window = display_force_data(self.parent, 
+                                    self.task_trial, 
+                                    self.task_stim, 
+                                    self.task_analog,
+                                    self.DS8R_analog,
+                                    self.DS8R_trig,
+                                    self.target_profile_x,
+                                    self.target_profile_y,
+                                    self.stim_profile_x,
+                                    self.stim_profile_y,
+                                    self.DS8R_profile_x,
+                                    self.DS8R_profile_y,
+                                    trial_params=trial_params,
+                                    dev_select=self.vis_TMSi.get(),
+                                    vis_chan_mode = self.vis_chan_mode.get(),
+                                    vis_chan = self.vis_chan.get(),
+                                    record=True
+                                    )
+        window.grab_set()
+        self.parent.wait_window(window)
 
-            out_mat = {
-                "time": np.array(self.parent.frame_exp.dump_time),
-                "force": np.array(self.parent.frame_exp.dump_force),
-                "trigs": np.array(self.parent.frame_exp.dump_trig),
-                "target_profile": np.array((self.target_profile_x,self.target_profile_y)).T,
-                "MVC": float(self.max_force.get())
-                    }
-            savemat(os.path.join(self.dump_path,'trial_'+ self.trial_ID.get()+'_'+str(start_time)+'_profiles'+".mat"), out_mat)
-            self.task_trial.write(False)
-            self.stop_tmsi()
-        else:
-            window = heat_gui(self.parent, self.task_trial, 
-                                        self.task_stim, 
-                                        self.target_profile_x,
-                                        self.target_profile_y,
-                                        np.unique(self.heat_profile_x),
-                                        self.heat_profile_y,
-                                        trial_params,
-                                        dev_select=self.vis_TMSi.get(),
-                                        vis_chan_mode = self.vis_chan_mode.get(),
-                                        vis_chan = self.vis_chan.get(),
-                                        record=True,
-                                        heat_dict = self.heat_dict,
-                                        thermodes = self.thermodes,
-                                        )
-            window.grab_set()
-            self.parent.wait_window(window)
-
-            out_mat = {
-                "time": np.array(self.parent.frame_exp.dump_time),
-                "force": np.array(self.parent.frame_exp.dump_force),
-                "trigs": np.array(self.parent.frame_exp.dump_trig),
-                "heat": np.array(self.parent.frame_exp.dump_heat),
-                "target_profile": np.array((self.target_profile_x,self.target_profile_y)).T,
-                "MVC": float(self.max_force.get())
-                    }
-            """
-            Sometimes mat file writing may be inconsistent
-            """
-            self.task_trial.write(False)
-            self.stop_tmsi()
-            savemat(os.path.join(self.dump_path,'trial_'+ self.trial_ID.get()+'_'+str(start_time)+'_profiles'+".mat"), out_mat)
-            
-            
+        out_mat = {
+            "time": np.array(self.parent.frame_exp.dump_time),
+            "force": np.array(self.parent.frame_exp.dump_force),
+            "trigs": np.array(self.parent.frame_exp.dump_trig),
+            "target_profile": np.array((self.target_profile_x,self.target_profile_y)).T,
+            "MVC": float(self.max_force.get())
+                }
+        
+        
+        self.task_trial.write(False)
+        self.stop_tmsi()
+        
+        self.task_analog.write(0)
         self.trial_finish_time = time.time()
         if not self.time_update_started:
             self.time_update()
-
+        self.stim_clear()
         # self.parent.withdraw()
-        nWin = tk.Tk()
-        nWin.withdraw()
-        self.painscore = simpledialog.askstring(title="Notes for trial", prompt = "Notes for trial "+self.trial_ID.get())
-        nWin.destroy()
-        self.update_json(self.param_file_path.get(),int(self.trial_ID.get()))
-
-        
-        self.read_next_trial()
+        if flag =='rec':
+            savemat(os.path.join(self.dump_path,'trial_'+ self.trial_ID.get()+'_'+str(start_time)+'_profiles'+".mat"), out_mat)
+            self.read_next_trial()
+            nWin = tk.Tk()
+            nWin.withdraw()
+            self.painscore = simpledialog.askstring(title="Notes for trial", prompt = "Notes for trial "+self.trial_ID.get())
+            nWin.destroy()
+            self.update_json(self.param_file_path.get(),int(self.trial_ID.get()))
+        else:
+            savemat(os.path.join(self.dump_path,'thresholding','thresholding_'+str(start_time)+'_profiles'+".mat"), out_mat)
+            self.read_cur_trial()
         self.parent.update()
 
     def set_vis_mode(self):
@@ -1535,10 +1514,15 @@ class APP:
         # self.task_trial = []
         window = display_force_data(self.parent, self.task_trial, 
                                     self.task_stim, 
+                                    self.task_analog,
+                                    self.DS8R_analog,
+                                    self.DS8R_trig,
                                     self.target_profile_x,
                                     self.target_profile_y,
                                     stim_profile_x =  np.empty(0),
                                     stim_profile_y =  np.empty(0),
+                                    DS8R_stim_x =  np.empty(0),
+                                    DS8R_stim_y =  np.empty(0),
                                     trial_params=trial_params,
                                     dev_select=self.vis_TMSi.get(),
                                     vis_chan_mode = self.vis_chan_mode.get(),
@@ -1563,11 +1547,16 @@ class APP:
             }
         window = check_MEPs_win(self.parent, self.task_trial, 
                                     self.task_stim, 
+                                    self.task_analog,
+                                    self.DS8R_analog,
+                                    self.DS8R_trig,
                                     self.target_profile_x,
                                     self.target_profile_y,
                                     self.stim_profile_x,
                                     self.stim_profile_y,
-                                    trial_params,
+                                    self.DS8R_profile_x,
+                                    self.DS8R_profile_y,
+                                    trial_params=trial_params,
                                     dev_select=self.vis_TMSi.get(),
                                     vis_chan_mode = self.vis_chan_mode.get(),
                                     vis_chan = self.vis_chan.get(),
@@ -1584,8 +1573,13 @@ class APP:
     def start_DAQ(self):
         self.task_stim = None
         self.task_trial = None
+        self.task_analog = None
+
+        self.DS8R_analog = None
+        self.DS8R_trig = None
 
         daq_name = self.daq_name.get()
+
         self.task_trial = nidaqmx.Task("trial_trig")
         self.task_trial.do_channels.add_do_chan( daq_name+"/" + self.trial_chan.get(),line_grouping=LineGrouping.CHAN_FOR_ALL_LINES)
         self.task_trial.start()
@@ -1594,6 +1588,22 @@ class APP:
         self.task_stim.do_channels.add_do_chan( daq_name+"/" + self.stim_chan.get(),line_grouping=LineGrouping.CHAN_FOR_ALL_LINES)
         self.task_stim.start()
         self.task_stim.write(False)
+        
+        self.task_analog = nidaqmx.Task("analog_val")
+        self.task_analog.ao_channels.add_ao_voltage_chan( daq_name+"/" + self.analog_chan.get(), min_val = float(self.analog_chan_minV.get()), max_val= float(self.analog_chan_maxV.get()))
+        self.task_analog.start()
+        self.task_analog.write(float(self.stim_intensity.get()))
+
+        self.DS8R_trig = nidaqmx.Task("DS8R_trig")
+        self.DS8R_trig.do_channels.add_do_chan( daq_name+"/" + self.DS8R_trig_chan.get(),line_grouping=LineGrouping.CHAN_FOR_ALL_LINES)
+        self.DS8R_trig.start()
+        self.DS8R_trig.write(False)
+
+        self.DS8R_analog = nidaqmx.Task("DS8R_stim")
+        self.DS8R_analog.ao_channels.add_ao_voltage_chan( daq_name+"/" + self.DS8R_analog_chan.get(), min_val = float(self.DS8R_analog_chan_minV.get()), max_val= float(self.DS8R_analog_chan_maxV.get()))
+        self.DS8R_analog.start()
+        self.DS8R_analog.write(float(self.DS8R_intensity.get()))
+
         self.start_daq_button.config(bg = 'green')
 
     def stream_DAQ(self):
@@ -1614,32 +1624,25 @@ class APP:
             self.streams[key] = FileWriter(FileFormat.lsl, self.tmsi_dev[key].dev_name)
             self.streams[key].open(self.tmsi_dev[key].dev)
         
-        # self.stream_2 = FileWriter(FileFormat.lsl, self.tmsi_dev[keysList[1]].dev_name)
-        # self.stream_2.open(self.tmsi_dev[keysList[1]].dev)
             if flag != "no_rec" and flag == "MVC":
                 save_path = os.path.join(dump_path,'MVC','MVC_'+key+'.poly5')
-                # save_path2 = os.path.join(dump_path,'trial_MVC_'+str(start_time)+'_'+keysList[1]+'.poly5')
                 self.file_writers[key] = FileWriter(FileFormat.poly5, save_path)
                 self.file_writers[key].open(self.tmsi_dev[key].dev)
-                # self.file_writer2 = FileWriter(FileFormat.poly5, save_path2)
-                # self.file_writer2.open(self.tmsi_dev[keysList[1]].dev)
             
             elif flag != "no_rec" and flag == "check":
                 save_path = os.path.join(dump_path,'MEPs',key+'.poly5')
-                # save_path2 = os.path.join(dump_path,'MEPs',str(start_time)+'_'+keysList[1]+'.poly5')
                 self.file_writers[key] = FileWriter(FileFormat.poly5, save_path)
                 self.file_writers[key].open(self.tmsi_dev[key].dev)
-                # self.file_writer2 = FileWriter(FileFormat.poly5, save_path2)
-                # self.file_writer2.open(self.tmsi_dev[keysList[1]].dev)
             
-                
+            elif flag != "no_rec" and flag == "thresholding":
+                save_path = os.path.join(dump_path,'thresholding','thresholding_'+key+'.poly5')
+                self.file_writers[key] = FileWriter(FileFormat.poly5, save_path)
+                self.file_writers[key].open(self.tmsi_dev[key].dev)
+
             elif flag != "no_rec" and flag == "rec":
                 save_path = os.path.join(dump_path,'trial_'+str(trial_num)+'_'+key+'.poly5')
-                # save_path2 = os.path.join(dump_path,'trial_'+str(trial_num)+'_'+str(start_time)+'_'+keysList[1]+'.poly5')
                 self.file_writers[key] = FileWriter(FileFormat.poly5, save_path)
                 self.file_writers[key].open(self.tmsi_dev[key].dev)
-                # self.file_writer2 = FileWriter(FileFormat.poly5, save_path2)
-                # self.file_writer2.open(self.tmsi_dev[keysList[1]].dev)
                 
             self.tmsi_dev[key].dev.start_measurement()
             # self.tmsi_dev[keysList[1]].dev.start_measurement()
@@ -1824,8 +1827,8 @@ class APP:
         assert len(self.target_profile_x) == len(self.target_profile_y)
         self.stim_profile_x = np.empty(0)
         self.stim_profile_y = np.empty(0)
-        self.heat_profile_x = np.empty(0)
-        self.heat_profile_y = np.empty(0)
+        self.DS8R_profile_x = np.empty(0)
+        self.DS8R_profile_y = np.empty(0)
 
         self.disp_target.clear()
         self.disp_target.set_xlabel("Time (s)", fontsize=14)
@@ -1837,17 +1840,34 @@ class APP:
         # self.start_sombrero_button.config(bg = 'yellow')
         # self.start_vanilla_button.config(bg = 'green')
 
+    def DS8R_stim_push(self):
+        
+        DS8R_x_profile = self.DS8R_x_profile.get()
+        DS8R_y_profile = self.DS8R_y_profile.get()
+        
+        DS8R_profile_x = np.array(DS8R_x_profile.split(','),dtype = float)
+        DS8R_profile_y = np.array(DS8R_y_profile.split(','),dtype = float)*float(self.DS8R_intensity.get())
+        
+        self.DS8R_profile_x = np.unique(np.concatenate((self.DS8R_profile_x,DS8R_profile_x)))
+        self.DS8R_profile_y = np.concatenate((self.DS8R_profile_y,DS8R_profile_y))
+        for y_val, x_val in zip(self.DS8R_profile_y,self.DS8R_profile_x):
+            self.disp_target_twin_ax.plot([x_val,x_val],[0,y_val], linewidth = 2, color = 'b')
+        self.canvas_disp_target.draw()
+
+        self.trl_duration = self.target_profile_x[-1]
+        self.DS8R_pushstim_button.config(bg = 'green')
+
     def stim_push(self):
         
-        stim_rate = float(self.parent.frame_exp.stim_rate.get())
-        stim_stop = float(self.stim_stop.get())
-        stim_start = float(self.stim_start.get())
-        trial_stim_profile_x = np.arange(stim_start,stim_stop,stim_rate)
-        trial_stim_profile_y = np.zeros_like(self.stim_profile_x)
+        TMS_xprofile = self.stim_x_profile.get()
+        TMS_yprofile = self.stim_y_profile.get()
+        
+        trial_stim_profile_x = np.array(TMS_xprofile.split(','),dtype = float)
+        trial_stim_profile_y = np.array(TMS_yprofile.split(','),dtype = float)*float(self.stim_intensity.get())
         
         self.stim_profile_x = np.unique(np.concatenate((self.stim_profile_x,trial_stim_profile_x)))
         self.stim_profile_y = np.concatenate((self.stim_profile_y,trial_stim_profile_y))
-        self.disp_target.vlines(self.stim_profile_x,0,np.max(self.target_profile_y), linewidth = 3, color = 'k')
+        self.disp_target.vlines(self.stim_profile_x,0,np.max(self.target_profile_y), linewidth = 2, color = 'k')
         self.canvas_disp_target.draw()
 
         self.trl_duration = self.target_profile_x[-1]
@@ -1856,11 +1876,15 @@ class APP:
     def stim_clear(self):
         self.stim_profile_x = np.empty(0)
         self.stim_profile_y = np.empty(0)
+        self.DS8R_profile_x = np.empty(0)
+        self.DS8R_profile_y = np.empty(0)
         assert len(self.target_profile_x) == len(self.target_profile_y)
         self.disp_target.clear()
+        self.disp_target_twin_ax.clear()
         self.canvas_disp_target.draw()
         self.do_vanilla()
-
+        self.pushstim_button.config(bg = 'yellow')
+        self.DS8R_pushstim_button.config(bg = 'yellow')
 
 def main():
     tk_trial = APP([],{"FLX":[],"EXT":[]})
