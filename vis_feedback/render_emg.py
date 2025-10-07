@@ -24,6 +24,8 @@ import nidaqmx.system
 from nidaqmx.constants import LineGrouping
 from tkinter import simpledialog
 import json
+import TMS_lib.DuoMAG
+
 """
 The code seems to be unstable if alternating between trail and rec mode
 Also sometimes stream does not close properly (issue with sample_data_server.py) which causes code to crash after a while
@@ -73,7 +75,7 @@ class DataInlet_reset(Inlet):
         return out
 
 class check_MEPs_win(tk.Toplevel):  
-    def __init__(self, parent, task_trial, task_stim, task_analog, DS8R_analog, DS8R_trig,target_profile_x,target_profile_y,stim_profile_x,stim_profile_y, DS8R_stim_x, DS8R_stim_y, trial_params,dev_select='FLX', vis_chan_mode='avg', vis_chan = 10,vis_chan_mode_check='single', vis_chan_check = 35,record = False):
+    def __init__(self, parent, task_trial, task_stim, task_analog, DS8R_analog, DS8R_trig,target_profile_x,target_profile_y,stim_profile_x,stim_profile_y, DS8R_stim_x, DS8R_stim_y, TMS_dev, trial_params,dev_select='FLX', vis_chan_mode='avg', vis_chan = 10,vis_chan_mode_check='single', vis_chan_check = 35,record = False):
         super().__init__(parent)
 
         self.vis_buffer_len = 5
@@ -95,6 +97,7 @@ class check_MEPs_win(tk.Toplevel):
         self.stim_profile_y = deque(list(stim_profile_y))
         self.DS8R_stim_profile_x = deque(list(DS8R_stim_x))
         self.DS8R_stim_profile_y = deque(list(DS8R_stim_y))
+        self.tms_dev = TMS_dev
         self.x_axis = np.linspace(0,1,self.vis_buffer_len)
         self.kill = False
 
@@ -269,6 +272,7 @@ class check_MEPs_win(tk.Toplevel):
                     stim_time = self.stim_profile_x.popleft()
                     curr_pulse_time = stim_time
                     self.task_stim.write(True)
+                    self.tms_dev.Pulse(stim_amp*10)
                     time.sleep(0.001)
                     self.task_stim.write(False)
                     self.trig_holder.append(1)
@@ -399,9 +403,8 @@ class check_MEPs_win(tk.Toplevel):
         self.destroy()
 
 class display_force_data(tk.Toplevel):
-    def __init__(self, parent, task_trial, task_stim, task_analog, DS8R_analog, DS8R_trig,target_profile_x,target_profile_y,stim_profile_x,stim_profile_y, DS8R_stim_x, DS8R_stim_y, trial_params,dev_select='FLX', vis_chan_mode='avg', vis_chan = 10,record = False):
+    def __init__(self, parent, task_trial, task_stim, task_analog, DS8R_analog, DS8R_trig,target_profile_x,target_profile_y,stim_profile_x,stim_profile_y, DS8R_stim_x, DS8R_stim_y, TMS_dev,trial_params,dev_select='FLX', vis_chan_mode='avg', vis_chan = 10,record = False):
         super().__init__(parent)
-
 
         self.vis_buffer_len = 5
         self.vis_xlim_pad = 3
@@ -419,6 +422,7 @@ class display_force_data(tk.Toplevel):
         self.stim_profile_y = deque(list(stim_profile_y))
         self.DS8R_stim_profile_x = deque(list(DS8R_stim_x))
         self.DS8R_stim_profile_y = deque(list(DS8R_stim_y))
+        self.tms_dev = TMS_dev
         self.x_axis = np.linspace(0,1,self.vis_buffer_len)
         self.kill = False
 
@@ -540,6 +544,7 @@ class display_force_data(tk.Toplevel):
                     stim = True
                     stim_time = self.stim_profile_x.popleft()
                     self.task_stim.write(True)
+                    self.tms_dev.Pulse(stim_amp*10)
                     time.sleep(0.001)
                     self.task_stim.write(False)
                     self.trig_holder.append(1)
@@ -1068,8 +1073,45 @@ class APP:
         self.trial_timer.place(x=1250, y=200)
         self.time_update_started = False
 
+        self.TMS1_COM = tk.StringVar()
+        self.lbl_TMS1_COM = ttk.Label(self.parent.frame_exp, text='TMS 1 COM PORT:')
+        self.lbl_TMS1_COM.pack(fill='x', expand=True)
+        self.lbl_TMS1_COM.place(x=450, y=400)
+        self.t_TMS1_COM = tk.Entry(self.parent.frame_exp, textvariable=self.TMS1_COM)
+        self.t_TMS1_COM.insert(0, "COM9")
+        self.t_TMS1_COM.pack(fill='x', expand=True)
+        self.t_TMS1_COM.focus()
+        self.t_TMS1_COM.place(x=600, y=400, width = 100)
 
+        self.TMS2_COM = tk.StringVar()
+        self.lbl_TMS2_COM = ttk.Label(self.parent.frame_exp, text='TMS 2 COM PORT:')
+        self.lbl_TMS2_COM.pack(fill='x', expand=True)
+        self.lbl_TMS2_COM.place(x=450, y=430)
+        self.t_TMS2_COM = tk.Entry(self.parent.frame_exp, textvariable=self.TMS2_COM)
+        self.t_TMS2_COM.insert(0, "COM10")
+        self.t_TMS2_COM.pack(fill='x', expand=True)
+        self.t_TMS2_COM.focus()
+        self.t_TMS2_COM.place(x=600, y=430, width = 100)
+
+        self.init_TMS_button = tk.Button(self.parent.frame_exp, text='INIT TMS DEV', bg ='yellow')
+        self.init_TMS_button['command'] = lambda: self.init_TMS()
+        self.init_TMS_button.pack()
+        self.init_TMS_button.place(x=450, y=480)
+
+        self.term_TMS_button = tk.Button(self.parent.frame_exp, text='TERM TMS DEV', bg ='red')
+        self.term_TMS_button['command'] = lambda: self.term_TMS()
+        self.term_TMS_button.pack()
+        self.term_TMS_button.place(x=550, y=480)
         
+    def init_TMS(self):
+        self.TMS1 = TMS_lib.DuoMAG.DuoMAG(self.TMS1_COM.get())
+        self.TMS2 = TMS_lib.DuoMAG.DuoMAG(self.TMS2_COM.get())
+        self.init_TMS_button.config(bg = 'green')
+
+    def term_TMS(self):
+        self.init_TMS_button.config(bg = 'yellow')
+        del self.TMS1, self.TMS2
+
     def time_update(self):
         self.trial_time.set(int(time.time() - self.trial_finish_time))
         self.parent.update()
@@ -1089,7 +1131,6 @@ class APP:
         params[str(trial_ID)]['notes'] =  str(self.painscore)
         with open(path, "w") as outfile: 
             json.dump(params, outfile, indent = 4) 
-
 
     def read_csv(self, path, trial_ID):
         
@@ -1138,7 +1179,6 @@ class APP:
         self.t_trial_ID.insert(0, str(current_trial))
 
         self.parent.update()
-
 
     def read_next_trial(self):
         self.trial_ID.set(str(int(self.trial_ID.get())+1))
@@ -1371,6 +1411,7 @@ class APP:
                                     self.stim_profile_y,
                                     self.DS8R_profile_x,
                                     self.DS8R_profile_y,
+                                    self.TMS1,
                                     trial_params=trial_params,
                                     dev_select=self.vis_TMSi.get(),
                                     vis_chan_mode = self.vis_chan_mode.get(),
@@ -1400,15 +1441,15 @@ class APP:
         # self.parent.withdraw()
         if flag =='rec':
             savemat(os.path.join(self.dump_path,'trial_'+ self.trial_ID.get()+'_'+str(start_time)+'_profiles'+".mat"), out_mat)
-            self.read_next_trial()
             nWin = tk.Tk()
             nWin.withdraw()
             self.painscore = simpledialog.askstring(title="Notes for trial", prompt = "Notes for trial "+self.trial_ID.get())
             nWin.destroy()
             self.update_json(self.param_file_path.get(),int(self.trial_ID.get()))
+            self.read_next_trial()
         else:
             savemat(os.path.join(self.dump_path,'thresholding','thresholding_'+str(start_time)+'_profiles'+".mat"), out_mat)
-            self.read_cur_trial()
+            self.push_thresh_profile()
         self.parent.update()
 
     def set_vis_mode(self):
@@ -1556,6 +1597,7 @@ class APP:
                                     self.stim_profile_y,
                                     self.DS8R_profile_x,
                                     self.DS8R_profile_y,
+                                    self.TMS1,
                                     trial_params=trial_params,
                                     dev_select=self.vis_TMSi.get(),
                                     vis_chan_mode = self.vis_chan_mode.get(),

@@ -206,6 +206,7 @@ def gen_rcrt_th_vis(args):
         event_dict = segment_trigs(f_trigs, threshold=3)
         f_aux = data[64:-3,:]
         f_grid = data[:64,:]
+        # f_aux = data[10:14,:]
         plot_grid_MEPs(args, f_grid, f_aux, event_dict, out_path, muscle_map[key]["GRID"])
         plot_grid_recruitment(args, f_grid, f_aux, event_dict, out_path, muscle_map[key]["GRID"])
 
@@ -385,7 +386,7 @@ if __name__ == "__main__":
     parser.add_argument('--max_val',default=750, type=int,
                         help= "Yaxis max value for MEPs (uV)")
     
-    parser.add_argument('--Hreflex_win',default=[25,33], type=list,
+    parser.add_argument('--Hreflex_win',default=[20,30], type=list,
                         help= "expected window for H reflex peak")
     
     parser.add_argument('--Mwave_win',default=[10,15], type=list,
@@ -399,24 +400,25 @@ if __name__ == "__main__":
     
     today = time.strftime("%Y%m%d")
     parser.add_argument('--exp_date',default=today, type=str,
+    # parser.add_argument('--exp_date',default=today, type=str,
                         help= "Data directory")
     
-    parser.add_argument('--MEP',default=False, type=bool,
+    parser.add_argument('--MEP',default=True, type=bool,
                         help= "Is the file an MEP scan")
         
     parser.add_argument('--thresholding',default=True, type=bool,
                         help= "Is the file a recruitment curve")
     
-    parser.add_argument('--particiapnt_ID',default='pilot', type=str,
+    parser.add_argument('--particiapnt_ID',default='tms_pilot', type=str,
                         help= "Data directory")
     
-    parser.add_argument('--fname',default="thresholding_FLX-20250916_133401", type=str,
+    parser.add_argument('--fname',default="thresholding_FLX-20251003_150424", type=str,
                         help= "File name of the trial")
     
 
     args = parser.parse_args(sys.argv[1:])
-    if args.MEP:
-        gen_MEP_vis(args)
+    # if args.MEP:
+    #     gen_MEP_vis(args)
     if args.thresholding:
         gen_rcrt_th_vis(args)
     # if not args.MEP and not args.thresholding:
