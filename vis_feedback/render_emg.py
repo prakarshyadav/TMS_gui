@@ -263,7 +263,7 @@ class check_MEPs_win(tk.Toplevel):
             self.trig_holder.popleft()
             
             stim = False
-
+            # tms_state = True
             if len(self.stim_profile_x)>0:
                 if time.time()-t0 > self.stim_profile_x[0]:
                     MEP_update = False
@@ -272,7 +272,7 @@ class check_MEPs_win(tk.Toplevel):
                     stim_time = self.stim_profile_x.popleft()
                     curr_pulse_time = stim_time
                     self.task_stim.write(True)
-                    self.tms_dev.Pulse(stim_amp*10)
+                    self.tms_dev[0].Pulse()
                     time.sleep(0.001)
                     self.task_stim.write(False)
                     self.trig_holder.append(1)
@@ -534,6 +534,7 @@ class display_force_data(tk.Toplevel):
             self.DS8R_analog.write(DS8R_amp)
 
         baseline = 0
+        tms_state = True
         while time.time()-t0 < self.trial_params['duration'] and not self.kill:
             time.sleep(0.0001)
             self.trig_holder.popleft()
@@ -544,7 +545,12 @@ class display_force_data(tk.Toplevel):
                     stim = True
                     stim_time = self.stim_profile_x.popleft()
                     self.task_stim.write(True)
-                    self.tms_dev.Pulse(stim_amp*10)
+                    if tms_state:
+                        self.tms_dev[0].Pulse(stim_amp*10,True)
+                        tms_state = False
+                    else:
+                        self.tms_dev[1].Pulse(stim_amp*10,True)
+                        tms_state = True
                     time.sleep(0.001)
                     self.task_stim.write(False)
                     self.trig_holder.append(1)
@@ -1411,7 +1417,7 @@ class APP:
                                     self.stim_profile_y,
                                     self.DS8R_profile_x,
                                     self.DS8R_profile_y,
-                                    self.TMS1,
+                                    TMS_dev=[self.TMS1,self.TMS2],
                                     trial_params=trial_params,
                                     dev_select=self.vis_TMSi.get(),
                                     vis_chan_mode = self.vis_chan_mode.get(),
@@ -1564,6 +1570,7 @@ class APP:
                                     stim_profile_y =  np.empty(0),
                                     DS8R_stim_x =  np.empty(0),
                                     DS8R_stim_y =  np.empty(0),
+                                    TMS_dev=[self.TMS1,self.TMS2],
                                     trial_params=trial_params,
                                     dev_select=self.vis_TMSi.get(),
                                     vis_chan_mode = self.vis_chan_mode.get(),
@@ -1597,7 +1604,7 @@ class APP:
                                     self.stim_profile_y,
                                     self.DS8R_profile_x,
                                     self.DS8R_profile_y,
-                                    self.TMS1,
+                                    TMS_dev=[self.TMS1,self.TMS2],
                                     trial_params=trial_params,
                                     dev_select=self.vis_TMSi.get(),
                                     vis_chan_mode = self.vis_chan_mode.get(),

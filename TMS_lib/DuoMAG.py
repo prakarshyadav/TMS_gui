@@ -60,18 +60,21 @@ class DuoMAG:
         if intensity is None and pulse is None:
             self._RequestPulse()
             return
-
+        t0 = time.time()
         if intensity is not None:
             if isinstance(intensity, (int, float)) and 0 <= intensity <= 100:
                 self._SendCommand([int(intensity), int(intensity)])
             else:
                 raise ValueError("The input argument INTENSITY must be a scalar between 0-100.")
+        print('set int time', time.time()-t0)
 
+        t0 = time.time()
         if isinstance(pulse, bool):
             if pulse:
                 self._RequestPulse()
         elif pulse is not None:
             raise ValueError("Set input argument pulse to true to request a pulse.")
+        print('pulse time', time.time()-t0)
 
     def Recharge(self, steps, stepSize):
         """
@@ -178,21 +181,24 @@ class DuoMAG:
         Args:
             data (list): A list of integers to send as a command.
         """
-
+        t0 = time.time()
         if self._serialPort.is_open:
             byteArray = bytearray(data)
             self._serialPort.write(byteArray)
-            time.sleep(0.05)
+            # time.sleep(0.05)
         else:
             raise Exception("Serial connection is not open.")
+        print('write time', time.time()-t0)
 
     def _RequestPulse(self):
         """
         Sends a pulse command to the DuoMAG device.
         """
-        while self.ReadStatus()["isCharged"] != 1:
-            time.sleep(0.01)
+        # while self.ReadStatus()["isCharged"] != 1:
+        #     time.sleep(0.0001)
+        t0=time.time()
         self._SendCommand([121, 121])
+        print('command time', time.time()-t0)
 
     def ReadStatus(self):
         """
